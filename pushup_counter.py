@@ -70,35 +70,43 @@ while cap.isOpened():
         # 肘のピクセル座標（角度表示用）
         px_elbow = (int(elbow[0] * w), int(elbow[1] * h))
         
-        # ----------------------------------------------------
-        # 2. 腕立て判定ロジック (角度に基づく)
-        # ----------------------------------------------------
-        # "down" フェーズ: 肘の角度が90度未満になったら
-        if angle < 90:
-            stage = "down"
+        # 上半身（肩・腰）の可視性チェック
+        right_hip_vis = landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].visibility
+        right_shoulder_vis = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].visibility
+        is_upper_body_visible = (right_hip_vis > 0.5) and (right_shoulder_vis > 0.5)
+        
+        # 上半身が映っていない場合は stage をリセットしてカウントしない
+        if not is_upper_body_visible:
+            stage = None
+        else:
+            # ----------------------------------------------------
+            # 2. 腕立て判定ロジック (角度に基づく) — 上半身が見えている場合のみ
+            # ----------------------------------------------------
+            # "down" フェーズ: 肘の角度が90度未満になったら
+            if angle < 90:
+                stage = "down"
             
-        # "up" フェーズ: "down"から角度が160度より大きくなったらカウント
-        if angle > 160 and stage == 'down':
-            stage = "up"
-            if counter > 0:  # 0より大きい場合のみカウントダウン
-                counter -= 1
-            
-            # 0に到達したらフォームを完了状態に
-            if counter == 0:
-                form_status = "COMPLETED!"
+            # "up" フェーズ: "down"から角度が160度より大きくなったらカウント
+            if angle > 160 and stage == 'down':
+                stage = "up"
+                if counter > 0:  # 0より大きい場合のみカウントダウン
+                    counter -= 1
+                
+                # 0に到達したらフォームを完了状態に
+                if counter == 0:
+                    form_status = "COMPLETED!"
 
         # ----------------------------------------------------
-        # 3. フォームの簡易チェック (肩と腰の高さ比較)
+        # 3. フォームの簡易チェック (肩と腰の高さ比較) — 上半身が見えている場合のみ
         # ----------------------------------------------------
-        right_hip_y = landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].y
-        right_shoulder_y = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].y
-        
-        # 簡易的なチェック: 肩と腰のY座標の差が一定値以内ならOK
-        # 腕立て伏せの際は、Y座標の値が小さいほど高い位置
-        y_diff = abs(right_shoulder_y - right_hip_y)
-        
-        # 0.1は調整可能な閾値
-        is_form_correct = y_diff < 0.15 
+        if is_upper_body_visible:
+            right_hip_y = landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].y
+            right_shoulder_y = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].y
+            y_diff = abs(right_shoulder_y - right_hip_y)
+            is_form_correct = y_diff < 0.15
+        else:
+            # 上半身が見えていない場合はフォーム不良として扱う（表示等は既存ロジックに任せる）
+            is_form_correct = False
 
         # ----------------------------------------------------
         # 4. 画面への情報表示
