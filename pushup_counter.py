@@ -10,8 +10,9 @@ pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 mp_drawing = mp.solutions.drawing_utils
 
 # カウンターとステージの変数
-counter = 0
+counter = 14  # 14回からカウントダウン開始
 stage = None  # "down" または "up"
+form_status = "Bad"  # フォームステータス
 
 def calculate_angle(a, b, c):
     """3点の角度を計算（Bを中心とした角度）"""
@@ -79,7 +80,12 @@ while cap.isOpened():
         # "up" フェーズ: "down"から角度が160度より大きくなったらカウント
         if angle > 160 and stage == 'down':
             stage = "up"
-            counter += 1
+            if counter > 0:  # 0より大きい場合のみカウントダウン
+                counter -= 1
+            
+            # 0に到達したらフォームを完了状態に
+            if counter == 0:
+                form_status = "COMPLETED!"
 
         # ----------------------------------------------------
         # 3. フォームの簡易チェック (肩と腰の高さ比較)
@@ -106,7 +112,7 @@ while cap.isOpened():
                     (px_elbow[0] + 10, px_elbow[1]), # 肘の近くに表示
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
         
-        # カウント表示 (左上)
+        # カウント表示（カウントダウン）
         cv2.putText(image, f'Push-ups: {counter}', (10, 40),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
                     
@@ -117,7 +123,8 @@ while cap.isOpened():
                     
         # フォームチェック結果表示 (左上)
         form_color = (0, 255, 0) if is_form_correct else (0, 0, 255) # 緑または赤
-        cv2.putText(image, f'Form: {"Good" if is_form_correct else "Bad"}', (10, 120),
+        form_status = "Good" if is_form_correct else "Bad"
+        cv2.putText(image, f'Form: {form_status}', (10, 120),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, form_color, 2)
 
 
