@@ -112,20 +112,35 @@ while cap.isOpened():
                     (px_elbow[0] + 10, px_elbow[1]), # 肘の近くに表示
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
         
-        # カウント表示（カウントダウン）
-        cv2.putText(image, f'Push-ups: {counter}', (10, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                    
-        # ステージ表示 (左上)
-        stage_color = (0, 255, 0) if stage == "up" else (0, 0, 255)
-        cv2.putText(image, f'Stage: {stage}', (10, 80),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, stage_color, 2)
-                    
-        # フォームチェック結果表示 (左上)
-        form_color = (0, 255, 0) if is_form_correct else (0, 0, 255) # 緑または赤
-        form_status = "Good" if is_form_correct else "Bad"
-        cv2.putText(image, f'Form: {form_status}', (10, 120),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, form_color, 2)
+        # カウント＆フォーム表示（上部・中央揃え）
+        top_margin = 30
+        padding = 10
+
+        # count ラベル（赤）と数値（白）を横並びで中央に配置
+        count_label = 'count:'
+        label_fs = 1
+        label_th = 2
+        label_size = cv2.getTextSize(count_label, cv2.FONT_HERSHEY_SIMPLEX, label_fs, label_th)[0]
+        num_size = cv2.getTextSize(str(counter), cv2.FONT_HERSHEY_SIMPLEX, label_fs, label_th)[0]
+        total_width = label_size[0] + 5 + num_size[0]
+        count_x = (w - total_width) // 2
+        count_y = top_margin + label_size[1]
+
+        cv2.putText(image, count_label, (count_x, count_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, label_fs, (0, 0, 255), label_th, cv2.LINE_AA)
+        cv2.putText(image, str(counter), (count_x + label_size[0] + 5, count_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, label_fs, (255, 255, 255), label_th, cv2.LINE_AA)
+
+        # フォーム表示はその下に中央揃えで配置
+        form_text = f'Form: {form_status}'
+        form_fs = 1
+        form_th = 2
+        form_size = cv2.getTextSize(form_text, cv2.FONT_HERSHEY_SIMPLEX, form_fs, form_th)[0]
+        form_x = (w - form_size[0]) // 2
+        form_y = count_y + padding + form_size[1]
+        form_color = (0, 255, 0) if is_form_correct else (0, 0, 255)
+        cv2.putText(image, form_text, (form_x, form_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, form_fs, form_color, form_th, cv2.LINE_AA)
 
 
     # ウィンドウ表示
