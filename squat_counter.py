@@ -1,7 +1,6 @@
 import cv2
 import mediapipe as mp
 import numpy as np
-import time
 
 # --- 初期設定 ---
 mp_pose = mp.solutions.pose
@@ -13,9 +12,10 @@ pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 cap = cv2.VideoCapture(0) # ウェブカメラを開く
 
 # --- カウントと状態管理用の変数 ---
-count = 0 
+count = 25  # 25からカウントダウン開始
 stage = None # 'up' (立ち上がっている) または 'down' (しゃがみ込んでいる)
 current_rep_ok = False # 現在の動作がカウント対象かどうかのフラグ
+form_color = (255, 255, 255)  # デフォルトの色（白）
 
 # フォーム判定用の閾値
 # 良いスクワットの目安：膝の角度が90度以下
@@ -72,52 +72,97 @@ while cap.isOpened():
             knee = get_landmark_coords(landmarks, mp_pose.PoseLandmark.RIGHT_KNEE)
             ankle = get_landmark_coords(landmarks, mp_pose.PoseLandmark.RIGHT_ANKLE)
 
-            # 膝の角度を計算（スクワットの深さを判断する主要な指標）
-            knee_angle = calculate_angle(hip, knee, ankle)
-            
-            # --- 姿勢とカウントのロジック ---
-            
-            # 1. しゃがみ込み（DOWN）の判定
-            # 膝の角度が閾値以下になったら、スクワットが成立
-            if knee_angle < SQUAT_THRESHOLD_ANGLE:
-                stage = "down"
-                form_color = (0, 255, 255) # 黄色
-            
-            # 2. 立ち上がり（UP）の判定とカウントアップ
-            # 'down' ステージから、十分に立ち上がった（膝の角度がほぼ180度）場合
-            if knee_angle > 165:
-                form_color = (0, 255, 0) # 緑色
-                if stage == "down":
-                    count += 1
-                    stage = "up"
+            # 全身が映っているかの可視性チェック
+            shoulder_vis = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].visibility
+            hip_vis = landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].visibility
+            knee_vis = landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].visibility
+            ankle_vis = landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].visibility
+            is_body_visible = (shoulder_vis > 0.5) and (hip_vis > 0.5) and (knee_vis > 0.5) and (ankle_vis > 0.5)
+
+            # 全身が見えていない場合はステージをリセット
+            if not is_body_visible:
+                stage = None
             else:
-                form_color = (0, 100, 255) # オレンジ色
-            
-            # --- 画面描画 ---
-            
-            # ランドマークと接続線の描画
-            mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
-                                     mp_drawing.DrawingSpec(color=(245,117,66), thickness=2, circle_radius=2), # 接続線の色
-                                     mp_drawing.DrawingSpec(color=form_color, thickness=2, circle_radius=4) # ランドマークの色
-                                    )
-            
-            # 角度表示 (デバッグ用)
-            cv2.putText(image, f'Knee Angle: {int(knee_angle)}', (400, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
-            
-            # 状態表示
-            cv2.putText(image, f'Stage: {stage.upper() if stage else "STAND"}', (400, 80),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, form_color, 2, cv2.LINE_AA)
-            
+                # 膝の角度を計算（スクワットの深さを判断する主要な指標）
+                knee_angle = calculate_angle(hip, knee, ankle)
+                
+                # --- 姿勢とカウントのロジック ---
+                
+                # 1. しゃがみ込み（DOWN）の判定
+                # 膝の角度が閾値以下になったら、スクワットが成立
+                if knee_angle < SQUAT_THRESHOLD_ANGLE:
+                    stage = "down"
+                    form_color = (0, 255, 255) # 黄色
+                
+                # 2. 立ち上がり（UP）の判定とカウントアップ
+                # 'down' ステージから、十分に立ち上がった（膝の角度がほぼ180度）場合
+                if knee_angle > 165:
+                    form_color = (0, 255, 0) # 緑色
+                    if stage == "down":
+                        count -= 1  # カウントダウン
+                        stage = "up"
+                        # 0に到達したら終了
+                        if count == 0:
+                            stage = "COMPLETED!"
+                else:
+                    form_color = (0, 100, 255) # オレンジ色
+                
+                # --- 画面描画 ---
+                
+                # ランドマークと接続線の描画
+                mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
+                                         mp_drawing.DrawingSpec(color=(245,117,66), thickness=2, circle_radius=2), # 接続線の色
+                                         mp_drawing.DrawingSpec(color=form_color, thickness=2, circle_radius=4) # ランドマークの色
+                                        )
+                    
+                # Stage表示（上部中央）
+                stage_text = f'Stage: {stage.upper() if stage else "STAND"}'
+                stage_fs = 1
+                stage_th = 2
+                stage_size = cv2.getTextSize(stage_text, cv2.FONT_HERSHEY_SIMPLEX, stage_fs, stage_th)[0]
+                stage_x = (w - stage_size[0]) // 2
+                stage_y = 30 + stage_size[1]
+                cv2.putText(image, stage_text, (stage_x, stage_y),
+                   cv2.FONT_HERSHEY_SIMPLEX, stage_fs, form_color, stage_th, cv2.LINE_AA)
+                
         except Exception as e:
             # ランドマークの一部が見つからない場合のエラーを無視
             pass
             
-    # --- 回数カウントの表示 (左上) ---
-    cv2.putText(image, 'REPS', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.putText(image, str(count), (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 3, cv2.LINE_AA)
+    # --- 回数カウントの表示 (上部中央揃え) ---
+    # Stage表示用の変数を先に初期化
+    stage_text = f'Stage: {stage.upper() if stage else "STAND"}'
+    stage_fs = 1
+    stage_th = 2
+    stage_size = cv2.getTextSize(stage_text, cv2.FONT_HERSHEY_SIMPLEX, stage_fs, stage_th)[0]
+    stage_x = (w - stage_size[0]) // 2
+    stage_y = 30 + stage_size[1]
     
-    # 
+    # ランドマークが検出されている場合のみ色を設定
+    if results.pose_landmarks:
+        cv2.putText(image, stage_text, (stage_x, stage_y),
+           cv2.FONT_HERSHEY_SIMPLEX, stage_fs, form_color, stage_th, cv2.LINE_AA)
+    else:
+        cv2.putText(image, stage_text, (stage_x, stage_y),
+           cv2.FONT_HERSHEY_SIMPLEX, stage_fs, (255, 255, 255), stage_th, cv2.LINE_AA)
+
+    # count ラベル（赤）と数値（緑）を上部中央に配置
+    top_margin = 30
+    padding = 10
+   
+    count_label = 'count:'
+    label_fs = 1
+    label_th = 2
+    label_size = cv2.getTextSize(count_label, cv2.FONT_HERSHEY_SIMPLEX, label_fs, label_th)[0]
+    num_size = cv2.getTextSize(str(count), cv2.FONT_HERSHEY_SIMPLEX, label_fs, label_th)[0]
+    total_width = label_size[0] + 5 + num_size[0]
+    count_x = (w - total_width) // 2
+    count_y = stage_y + padding + label_size[1]
+   
+    cv2.putText(image, count_label, (count_x, count_y),
+               cv2.FONT_HERSHEY_SIMPLEX, label_fs, (0, 0, 255), label_th, cv2.LINE_AA)
+    cv2.putText(image, str(count), (count_x + label_size[0] + 5, count_y),
+               cv2.FONT_HERSHEY_SIMPLEX, label_fs, (0, 255, 0), label_th, cv2.LINE_AA)
 
     # ウィンドウ表示
     cv2.imshow("Squat Counter Trainer", image)
