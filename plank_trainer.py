@@ -269,6 +269,11 @@ while cap.isOpened():
     # ウィンドウ表示
     cv2.imshow("Plank Countdown Trainer", image)
     
+    # タイマーが0になったら表示を短く保持して終了
+    if remaining_time <= 0 or form_status == "COMPLETED!":
+        cv2.waitKey(2000)
+        break
+
     # 'q'キーで終了
     if cv2.waitKey(10) & 0xFF == ord('q'):
         break

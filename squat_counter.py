@@ -167,6 +167,19 @@ while cap.isOpened():
     # ウィンドウ表示
     cv2.imshow("Squat Counter Trainer", image)
     
+    # カウントが0以下になったら完了表示を出して終了
+    if count <= 0:
+        done_text = "COMPLETED!"
+        fs = 1.5
+        th = 3
+        size = cv2.getTextSize(done_text, cv2.FONT_HERSHEY_SIMPLEX, fs, th)[0]
+        x = (w - size[0]) // 2
+        y = (h // 2) + size[1] // 2
+        cv2.putText(image, done_text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 255, 0), th, cv2.LINE_AA)
+        cv2.imshow("Squat Counter Trainer", image)
+        cv2.waitKey(2000)
+        break
+
     # 'q'キーまたはESCキーで終了
     if cv2.waitKey(10) & 0xFF in [ord('q'), 27]:
         break

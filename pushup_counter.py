@@ -154,6 +154,11 @@ while cap.isOpened():
     # ウィンドウ表示
     cv2.imshow("Push-Up Counter", image)
     
+    # カウンターが0になったら終了
+    if counter == 0:
+        cv2.waitKey(2000)  # 2秒間表示を保持
+        break
+    
     # 'q'キーで終了
     if cv2.waitKey(10) & 0xFF == ord('q'):
         break
