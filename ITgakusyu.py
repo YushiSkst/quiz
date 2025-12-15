@@ -7,10 +7,10 @@ import re
 import unicodedata
 import httpx
 from openai import OpenAI
-import csv
 import random
 import os
-import pandas as pd  # pandasを追加
+import pandas as pd
+import threading
 
 # ───────────────────────────────
 # 設定・定数
@@ -18,7 +18,7 @@ import pandas as pd  # pandasを追加
 # AI設定
 API_BASE_URL = "http://192.168.19.1:11434/v1"
 API_KEY = "fake-key"
-MODEL_NAME = "gemma3:12b-it-q4_K_M"
+MODEL_NAME = "gemma3:27b-it-q4_K_M"
 
 # GUI設定
 COLOR_BG = "#e8f5e9"        # 背景色（薄い緑）
@@ -35,7 +35,7 @@ EXERCISE_PROGRAMS = {
 }
 
 # ───────────────────────────────
-# ① ロジッククラス（問題生成・正誤判定）
+# ① ロジッククラス（問題生成・正誤判定・履歴管理）
 # ───────────────────────────────
 class QuizLogic:
     """
@@ -45,97 +45,153 @@ class QuizLogic:
         self.client = OpenAI(
             base_url=API_BASE_URL,
             api_key=API_KEY,
-            http_client=httpx.Client(verify=False, timeout=60.0),
+            http_client=httpx.Client(verify=False, timeout=120.0),
         )
+        # 使用済みデータの行番号を記録するリスト（データ被り防止用）
+        self.used_indices = []
 
-    def load_random_excel_data(self, filepath, num_samples=5):
+    def reset_history(self):
+        """履歴をリセットする"""
+        self.used_indices = []
+
+    def load_random_excel_data(self, filepath, num_samples=20):
         """
-        Excelファイルを読み込み、ランダムに数行を抽出してテキストとして返す
-        pandasを使用して読み込む (.xlsx形式)
+        Excelファイルを読み込み、まだ使っていない行からランダムにデータを抽出
         """
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"ファイルが見つかりません: {filepath}")
 
         try:
-            # pandasを使用してExcelを読み込み (header=Noneですべてデータとして扱う)
-            # Excel読み込みには 'openpyxl' ライブラリが必要です
             df = pd.read_excel(filepath, header=None)
             
             if df.empty:
                 return "データがありません。"
 
-            # データ量が多すぎる場合のためにランダムサンプリング
-            if len(df) > num_samples:
-                sampled_df = df.sample(n=num_samples)
-            else:
-                sampled_df = df
+            total_rows = len(df)
             
-            # AIへのプロンプトにはCSV形式の文字列として渡すと理解しやすいため変換して返す
+            # まだ使っていない行のインデックスを取得
+            available_indices = [i for i in range(total_rows) if i not in self.used_indices]
+            
+            # もし未使用データが足りなければ、履歴をリセットして全データから選ぶ
+            if len(available_indices) < num_samples:
+                print("データが一巡しました。履歴をリセットして再利用します。")
+                self.used_indices = []
+                available_indices = list(range(total_rows))
+
+            # 利用可能な行からランダムにインデックスを選択
+            current_sample_size = min(len(available_indices), num_samples)
+            selected_indices = random.sample(available_indices, current_sample_size)
+            
+            # 選んだインデックスを使用済みリストに追加
+            self.used_indices.extend(selected_indices)
+
+            # 選んだ行のデータを抽出
+            sampled_df = df.iloc[selected_indices]
+            
+            print(f"使用した行番号: {selected_indices}") # デバッグ用
             return sampled_df.to_csv(index=False, header=False)
 
         except Exception as e:
             raise RuntimeError(f"Excel読み込みエラー: {e}")
 
-    def generate_quiz(self, difficulty, filename):
+    def generate_quiz_batch(self, difficulty, filename, num_questions=10):
         """
-        指定されたExcelファイルの内容に基づいてAIで問題を生成する
+        指定されたExcelファイルの内容に基づいて、指定数分の問題を【一括生成】する
         """
-        # Excelデータを取得
+        # Excelデータを取得（履歴管理機能付き）
         try:
-            data_content = self.load_random_excel_data(filename)
+            data_content = self.load_random_excel_data(filename, num_samples=30)
         except Exception as e:
             print(e)
             return None
 
         # プロンプト作成
         base_instruction = f"""
-        あなたはクイズ作成AIです。
-        以下の【学習データ】の内容**のみ**に基づいて、クイズを1問作成してください。
-        問題の形式としては、文章列の文章からキーワード1**または**キーワード2を題材として問題を生成してください。
-        外部知識は使用しないでください。
+        あなたはプロのクイズ作家です。
+        以下の【学習データ】の内容**のみ**に基づいて、多様なクイズを作成してください。
+        （前回とは違う箇所のデータを使用しています）
         
+        ## 🤖 クイズ生成の絶対ルール
+        1. **正解の重複禁止**: 全{num_questions}問において、正解となる単語はすべて異なるものにすること。
+        2. **問題文の重複禁止(重要)**: すべての問題文（question）は、言い回しや問う内容を変え、**1つとして同じ文章にしてはいけません**。
+        3. **配置のランダム化**: 選択肢の正解位置はランダムにすること。
+        4. **JSON配列で出力**: 指定された問題数を、1つのJSON配列（リスト）として出力すること。
+
         【学習データ】
         {data_content}
         """
 
         if difficulty == "初級":
-            prompt = base_instruction + """
-            初級レベルの三択問題を生成してください。
-            選択肢として挙げられる単語は、答えの単語と役割や機能が似ているものにしてください。
-            JSONのみで出力:
-            {
-              "question": "問題文",
-              "choices": ["選択肢1", "選択肢2", "選択肢3"],
-              "answer": "正解の選択肢の文字列（choicesに含まれるものと完全に一致させること）"
-            }
+            prompt = base_instruction + f"""
+            初級レベルの三択問題を**{num_questions}問**生成してください。
+            
+            ### 出力例（このように異なる問題文を作成すること）:
+            [
+              {{
+                "question": "CPUの役割として正しいものはどれか？",
+                "choices": ["演算処理", "記憶", "入力"],
+                "answer": "演算処理"
+              }},
+              {{
+                "question": "データを一時的に保存する装置は何か？",
+                "choices": ["HDD", "メモリ", "マウス"],
+                "answer": "メモリ"
+              }}
+            ]
+            
+            以下の形式のJSON配列のみを出力してください（Markdown記法は不要）：
             """
         elif difficulty == "中級":
-            prompt = base_instruction + """
-            中級レベルの単語入力問題（記述式）を生成してください。
+            prompt = base_instruction + f"""
+            中級レベルの単語入力問題（記述式）を**{num_questions}問**生成してください。
             答えは学習データに含まれる単語にしてください。
-            JSONのみで出力:
-            {
-              "question": "問題文",
-              "answer": "答えのキーワード"
-            }
+            
+            ### 出力例（このように異なる問題文を作成すること）:
+            [
+              {{
+                "question": "コンピュータの頭脳と呼ばれる装置は何か？",
+                "answer": "CPU"
+              }},
+              {{
+                "question": "Webサイトを閲覧するために使うソフトは？",
+                "answer": "ブラウザ"
+              }}
+            ]
+            
+            以下の形式のJSON配列のみを出力してください（Markdown記法は不要）：
             """
-        else:
-            return None
 
         # --- AI 実行 ---
         try:
             response = self.client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.7, # 少し創造性を下げる（データに忠実にするため）
+                temperature=0.8, # 多様性を出すために少し高め
             )
             text = response.choices[0].message.content
 
             # --- JSON抽出 ---
-            match = re.search(r"\{[\s\S]*\}", text)
+            match = re.search(r"\[\s*\{[\s\S]*\}\s*\]", text)
             if not match:
-                return None
-            return json.loads(match.group())
+                match = re.search(r"\{[\s\S]*\}", text)
+                if not match: return None
+            
+            json_str = match.group()
+            raw_quiz_list = json.loads(json_str)
+
+            # --- Python側での重複排除（安全装置） ---
+            unique_quiz_list = []
+            seen_questions = set()
+            
+            for quiz in raw_quiz_list:
+                q_text = quiz.get("question", "")
+                # 問題文が既に存在する場合はスキップ
+                if q_text not in seen_questions:
+                    unique_quiz_list.append(quiz)
+                    seen_questions.add(q_text)
+
+            return unique_quiz_list
+            
         except Exception as e:
             print(f"Error generating quiz: {e}")
             return None
@@ -143,11 +199,11 @@ class QuizLogic:
     def check_answer(self, difficulty, quiz, user_answer):
         """ユーザーの回答を判定する"""
         if difficulty == "初級":
-            # 記号ではなく文字列で比較
             return user_answer == quiz["answer"]
 
         elif difficulty == "中級":
             def normalize(t):
+                # 全角・半角や大文字・小文字を統一して比較
                 t = unicodedata.normalize("NFKC", t.lower())
                 return "".join(
                     c for c in t if c.isalnum() or "\u3040" <= c <= "\u9faf"
@@ -167,19 +223,22 @@ class QuizApp:
         
         # 基本ウィンドウ設定
         root.title("Excelデータ クイズ生成機")
-        root.geometry("600x600")
+        root.geometry("600x650")
         root.configure(bg=COLOR_BG)
 
         # 状態管理変数
         self.difficulty_var = tk.StringVar(value="初級")
-        # デフォルトファイルをxlsxに変更
         self.file_var = tk.StringVar(value="data.xlsx") 
-        self.current_quiz = None
+        
+        # クイズデータ管理用
+        self.quiz_list = []      # 生成された全問題リスト
+        self.current_quiz = None # 現在出題中の問題
+        self.question_index = 0  # 現在何問目か (0始まり)
+        
         self.correct_count = 0
         self.wrong_count = 0
-        self.question_index = 0
-        self.asked_questions = set()
         self.quiz_frame = None
+        self.loading_label = None
 
         # スタート画面の描画
         self.setup_start_screen()
@@ -199,7 +258,6 @@ class QuizApp:
         # 難易度設定
         tk.Label(self.root, text="難易度を選択してください", bg=COLOR_BG, font=("Yu Gothic", 12)).pack(pady=(20, 5))
 
-        # ラジオボタン用のフレーム
         radio_frame = tk.Frame(self.root, bg=COLOR_BG)
         radio_frame.pack(pady=5)
 
@@ -213,39 +271,67 @@ class QuizApp:
             bg=COLOR_BG, activebackground=COLOR_BG, font=("Yu Gothic", 11)
         ).pack(side=tk.LEFT, padx=10)
 
-        # ファイル名入力欄（オプション：変更可能にする場合）
-        # tk.Label(self.root, text="読み込むExcelファイル:", bg=COLOR_BG).pack(pady=(20, 0))
-        # tk.Entry(self.root, textvariable=self.file_var).pack()
-
         # スタートボタン
         tk.Button(
-            self.root, text="クイズ開始",
+            self.root, text="問題を生成して開始",
             font=("Yu Gothic", 12, "bold"),
             bg=COLOR_BTN_MAIN, fg=COLOR_BTN_TEXT,
-            command=self.start_quiz,
+            command=self.prepare_quiz_start, # 準備処理へ
             width=20, height=2
         ).pack(pady=40)
 
-    def start_quiz(self):
-        """クイズの初期化と開始"""
+    def prepare_quiz_start(self):
+        """クイズ開始前の準備（ロード画面表示とデータ生成）"""
         self.difficulty = self.difficulty_var.get()
         self.filename = self.file_var.get()
         
-        # ファイル存在チェック
         if not os.path.exists(self.filename):
             messagebox.showerror("エラー", f"ファイル '{self.filename}' が見つかりません。\n実行フォルダに配置してください。")
             return
 
-        # カウンターリセット
-        self.correct_count = 0
-        self.wrong_count = 0
-        self.question_index = 0
-        self.asked_questions = set()
-        
-        # 画面遷移
+        # 画面を一度クリア
         for widget in self.root.winfo_children():
             widget.destroy()
             
+        # ロード画面のラベルを保持
+        self.loading_label = tk.Label(
+            self.root, text="AIが問題を生成しています...\n(10問作成中)", 
+            font=("Yu Gothic", 16), bg=COLOR_BG, fg=COLOR_TEXT_MAIN
+        )
+        self.loading_label.pack(expand=True)
+        
+        self.root.update() # 画面描画を更新
+
+        # 処理ブロック防止のため、少し待ってからデータ生成へ
+        self.root.after(100, self.generate_and_start)
+
+    def generate_and_start(self):
+        """AIを使って一括生成し、完了したらクイズ画面へ"""
+        # AI処理（時間がかかる）
+        quiz_data = self.logic.generate_quiz_batch(self.difficulty, self.filename, num_questions=10)
+        
+        # ロード画面を確実に削除
+        if hasattr(self, 'loading_label') and self.loading_label:
+            self.loading_label.destroy()
+            self.loading_label = None
+
+        if not quiz_data or not isinstance(quiz_data, list):
+            messagebox.showerror("エラー", "問題生成に失敗しました。\nもう一度お試しください。")
+            self.setup_start_screen()
+            return
+        
+        if len(quiz_data) == 0:
+            messagebox.showerror("エラー", "問題が生成されませんでした。\nExcelデータを確認してください。")
+            self.setup_start_screen()
+            return
+
+        # 変数リセット
+        self.quiz_list = quiz_data
+        self.question_index = 0
+        self.correct_count = 0
+        self.wrong_count = 0
+        
+        # クイズ画面へ
         self.show_next_question()
 
     def show_next_question(self):
@@ -253,33 +339,13 @@ class QuizApp:
         if self.quiz_frame:
             self.quiz_frame.destroy()
 
-        # 10問終了したら結果画面へ
-        if self.question_index >= 10:
+        # 全問終了チェック
+        if self.question_index >= len(self.quiz_list):
             self.show_final_result()
             return
 
-        # ローディング表示（AI待ち）
-        loading_label = tk.Label(self.root, text="問題を生成中...", bg=COLOR_BG, font=("Yu Gothic", 12))
-        loading_label.pack(pady=50)
-        self.root.update() # 画面更新
-
-        # 問題生成
-        quiz = None
-        for _ in range(5): # リトライ回数
-            quiz = self.logic.generate_quiz(self.difficulty, self.filename)
-            if quiz and quiz["question"] not in self.asked_questions:
-                break
-        
-        loading_label.destroy()
-
-        if not quiz:
-            messagebox.showerror("エラー", "問題生成に失敗しました。\nExcelファイルの内容を確認してください。")
-            self.show_final_result()
-            return
-
-        self.current_quiz = quiz
-        self.asked_questions.add(quiz["question"])
-        self.question_index += 1
+        # 現在の問題を取得
+        self.current_quiz = self.quiz_list[self.question_index]
 
         # --- UI 構築 ---
         self.quiz_frame = tk.Frame(self.root, bg=COLOR_BG)
@@ -287,27 +353,26 @@ class QuizApp:
 
         # 問題番号
         tk.Label(
-            self.quiz_frame, text=f"第 {self.question_index} 問",
+            self.quiz_frame, text=f"第 {self.question_index + 1} 問 / 全{len(self.quiz_list)}問",
             bg=COLOR_BG, fg=COLOR_TEXT_MAIN, font=("Yu Gothic", 16, "bold")
         ).pack(pady=5)
 
         # 問題文
         tk.Label(
-            self.quiz_frame, text=quiz["question"],
+            self.quiz_frame, text=self.current_quiz["question"],
             wraplength=500, justify="center",
             bg=COLOR_BG, font=("Yu Gothic", 14)
         ).pack(pady=10)
 
         # 選択肢または入力欄の表示
         if self.difficulty == "初級":
-            self.create_choice_buttons(quiz)
+            self.create_choice_buttons(self.current_quiz)
         else:
             self.create_input_field()
 
     def create_choice_buttons(self, quiz):
         """初級用：三択ボタンの生成"""
         choices = quiz["choices"]
-        # A, B, C のラベルは表示用として生成
         labels = ["A", "B", "C"]
         
         for label, text in zip(labels, choices):
@@ -315,9 +380,9 @@ class QuizApp:
                 self.quiz_frame,
                 text=f"{label}: {text}",
                 bg="#81c784", fg="black",
-                font=("Yu Gothic", 14),
-                width=30, height=2,
-                # ラベルではなくテキストそのものを渡す
+                font=("Yu Gothic", 12),
+                width=40, height=2,
+                wraplength=350,
                 command=lambda x=text: self.check_answer_gui(x)
             ).pack(pady=5)
 
@@ -325,6 +390,10 @@ class QuizApp:
         """中級用：入力フィールドの生成"""
         self.entry = tk.Entry(self.quiz_frame, font=("Yu Gothic", 14), width=30)
         self.entry.pack(pady=10, ipady=5)
+        self.entry.focus_set() # フォーカスを当てる
+
+        # Enterキーでも回答できるようにする
+        self.root.bind('<Return>', lambda event: self.check_answer_gui(self.entry.get()))
 
         tk.Button(
             self.quiz_frame, text="回答する",
@@ -336,15 +405,19 @@ class QuizApp:
 
     def check_answer_gui(self, user_answer):
         """回答チェックと中間結果表示"""
+        # Enterキーバインドを解除（二重送信防止）
+        self.root.unbind('<Return>')
+        
         is_correct = self.logic.check_answer(self.difficulty, self.current_quiz, user_answer)
 
         if is_correct:
             messagebox.showinfo("結果", "正解！")
             self.correct_count += 1
         else:
-            messagebox.showinfo("結果", f"不正解… 正解は「{self.current_quiz['answer']}」")
+            messagebox.showinfo("結果", f"不正解…\n正解は「{self.current_quiz['answer']}」です。")
             self.wrong_count += 1
 
+        self.question_index += 1
         self.show_next_question()
 
     def show_final_result(self):
@@ -376,15 +449,18 @@ class QuizApp:
             command=self.setup_start_screen
         ).pack(pady=10)
 
-        # 終了して運動するボタン (変更: 選択画面を表示するメソッドへ)
+        # 終了して運動するボタン
         tk.Button(
             result_frame, text="終了して運動する",
             bg="#ef5350", fg="white",
             font=("Yu Gothic", 12, "bold"),
             width=20,
-            command=self.open_exercise_selector
+            command=self.open_exercise_selector # 変更箇所: 選択画面を開く
         ).pack(pady=20)
 
+    # ───────────────────────────────
+    # ★追加: 運動プログラム選択機能
+    # ───────────────────────────────
     def open_exercise_selector(self):
         """運動プログラム選択ウィンドウを開く"""
         self.selector_window = tk.Toplevel(self.root)
@@ -426,19 +502,22 @@ class QuizApp:
             messagebox.showerror("エラー", "プログラムが見つかりません。")
             return
 
+        # 不正解数を取得
+        wrong_count_str = str(self.wrong_count)
+
         # メインウィンドウと選択ウィンドウを破棄
         self.selector_window.destroy()
         self.root.destroy()
 
         try:
             # 外部プログラムを実行
-            subprocess.run(["python", program_file])
+            # 引数としてファイル名の後に不正解数を渡す
+            subprocess.run(["python", program_file, wrong_count_str])
         except FileNotFoundError:
             print(f"エラー: {program_file} が見つかりませんでした。")
         except Exception as e:
             print(f"実行エラー: {e}")
-
-
+            
 # ───────────────────────────────
 # ③ メイン実行処理
 # ───────────────────────────────

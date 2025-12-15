@@ -2,6 +2,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import time
+import sys  # ★追加: 引数受け取り用
 
 # --- 初期設定 ---
 mp_pose = mp.solutions.pose
@@ -12,8 +13,23 @@ pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
 cap = cv2.VideoCapture(0)
 
+# --- 引数処理とタイマー設定 ---
+# デフォルト値
+base_time = 30
+penalty_per_wrong = 5  # 不正解1問につき5秒追加
+wrong_count = 0
+
+# コマンドライン引数から不正解数を取得
+if len(sys.argv) > 1:
+    try:
+        wrong_count = int(sys.argv[1])
+    except ValueError:
+        wrong_count = 0
+
+TARGET_TIME_SECONDS = base_time + (wrong_count * penalty_per_wrong)
+print(f"不正解数: {wrong_count}, 目標時間: {TARGET_TIME_SECONDS}秒")
+
 # --- タイマーとフォーム判定用の変数 ---
-TARGET_TIME_SECONDS = 30     # 目標プランク時間（秒）
 plank_time_accumulated = 0.0 # フォーム良しでプランクを行った累積時間
 last_good_form_time = None   # 最後にフォームが「Good」であった時の時刻
 is_counting = False          # 現在カウントが進行しているかどうかのフラグ

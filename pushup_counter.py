@@ -1,16 +1,29 @@
 import cv2
 import mediapipe as mp
 import numpy as np
+import sys  # ★追加
 
 # 初期設定
 mp_pose = mp.solutions.pose
-# 姿勢検出モデルの初期化 (精度を高めるためにstatic_image_mode=Falseが一般的だが、
-# ここではデフォルト設定のままで進めます)
+# 姿勢検出モデルの初期化
 pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 mp_drawing = mp.solutions.drawing_utils
 
+# --- 引数処理と回数設定 ---
+base_count = 14
+penalty_per_wrong = 1  # 不正解1問につき1回追加
+wrong_count = 0
+
+if len(sys.argv) > 1:
+    try:
+        wrong_count = int(sys.argv[1])
+    except ValueError:
+        wrong_count = 0
+
 # カウンターとステージの変数
-counter = 14  # 14回からカウントダウン開始
+counter = base_count + (wrong_count * penalty_per_wrong)
+print(f"不正解数: {wrong_count}, 目標回数: {counter}回")
+
 stage = None  # "down" または "up"
 form_status = "Bad"  # フォームステータス
 

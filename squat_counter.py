@@ -1,6 +1,7 @@
 import cv2
 import mediapipe as mp
 import numpy as np
+import sys  # ★追加
 
 # --- 初期設定 ---
 mp_pose = mp.solutions.pose
@@ -11,8 +12,21 @@ pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
 cap = cv2.VideoCapture(0) # ウェブカメラを開く
 
+# --- 引数処理と回数設定 ---
+base_count = 25
+penalty_per_wrong = 2  # 不正解1問につき2回追加
+wrong_count = 0
+
+if len(sys.argv) > 1:
+    try:
+        wrong_count = int(sys.argv[1])
+    except ValueError:
+        wrong_count = 0
+
 # --- カウントと状態管理用の変数 ---
-count = 25  # 25からカウントダウン開始
+count = base_count + (wrong_count * penalty_per_wrong)
+print(f"不正解数: {wrong_count}, 目標回数: {count}回")
+
 stage = None # 'up' (立ち上がっている) または 'down' (しゃがみ込んでいる)
 current_rep_ok = False # 現在の動作がカウント対象かどうかのフラグ
 form_color = (255, 255, 255)  # デフォルトの色（白）
