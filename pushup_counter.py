@@ -2,6 +2,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import sys  # ★追加
+import math
 
 # 初期設定
 mp_pose = mp.solutions.pose
@@ -21,8 +22,10 @@ if len(sys.argv) > 1:
         wrong_count = 0
 
 # カウンターとステージの変数
-counter = base_count + (wrong_count * penalty_per_wrong)
-print(f"不正解数: {wrong_count}, 目標回数: {counter}回")
+# ペナルティの合計は小数が出ることがあるため繰り上げして整数にする
+penalty_total = math.ceil(wrong_count * penalty_per_wrong)
+counter = base_count + penalty_total
+print(f"不正解数: {wrong_count}, ペナルティ合計(繰り上げ): {penalty_total}, 目標回数: {counter}回")
 
 stage = None  # "down" または "up"
 form_status = "Bad"  # フォームステータス
