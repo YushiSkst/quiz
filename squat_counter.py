@@ -14,7 +14,7 @@ cap = cv2.VideoCapture(0) # ウェブカメラを開く
 
 # --- 引数処理と回数設定 ---
 base_count = 25
-penalty_per_wrong = 2  # 不正解1問につき2回追加
+penalty_per_wrong = 1  # 不正解1問につき1回追加
 wrong_count = 0
 
 if len(sys.argv) > 1:

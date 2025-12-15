@@ -11,7 +11,7 @@ mp_drawing = mp.solutions.drawing_utils
 
 # --- 引数処理と回数設定 ---
 base_count = 14
-penalty_per_wrong = 1  # 不正解1問につき1回追加
+penalty_per_wrong = 0.5  # 不正解1問につき0.5回追加
 wrong_count = 0
 
 if len(sys.argv) > 1:

@@ -16,7 +16,7 @@ cap = cv2.VideoCapture(0)
 # --- 引数処理とタイマー設定 ---
 # デフォルト値
 base_time = 30
-penalty_per_wrong = 5  # 不正解1問につき5秒追加
+penalty_per_wrong = 3  # 不正解1問につき3秒追加
 wrong_count = 0
 
 # コマンドライン引数から不正解数を取得
