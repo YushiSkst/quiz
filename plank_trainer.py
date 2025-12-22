@@ -35,8 +35,9 @@ last_good_form_time = None   # 最後にフォームが「Good」であった時
 is_counting = False          # 現在カウントが進行しているかどうかのフラグ
 
 # フォーム判定用の閾値
-HIP_ANGLE_MIN = 160      # 肩-腰-膝の角度 (体が一直線に近いほど良い)
-Y_OFFSET_MAX_LINE = 0.05 # 肩-足首の直線からの腰の許容誤差（正規化座標）
+# 閾値を緩めました（ユーザー要望）
+HIP_ANGLE_MIN = 150      # 肩-腰-膝の角度 (閾値を緩める)
+Y_OFFSET_MAX_LINE = 0.08 # 肩-膝の直線からの腰の許容誤差（正規化座標、緩め）
 
 # --- ユーティリティ関数 ---
 def calculate_angle(a, b, c):
@@ -83,19 +84,18 @@ def check_plank_form(landmarks):
                landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].y]
         knee = [landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].x,
                 landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value].y]
-        ankle = [landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].x,
-                 landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value].y] 
+        # 足首判定は廃止（ユーザー要望により）
 
         # 1. 体の直線性チェック: 肩-腰-膝の角度
         hip_angle = calculate_angle(shoulder, hip, knee)
         is_straight = hip_angle > HIP_ANGLE_MIN
         
-        # 2. 腰の高さチェック (肩-足首の直線からの垂直距離)
-        dist_from_line = distance_point_to_line(hip, shoulder, ankle)
+        # 2. 腰の高さチェック (肩-膝の直線からの垂直距離) — 足首判定を廃止
+        dist_from_line = distance_point_to_line(hip, shoulder, knee)
         is_hip_level = dist_from_line < Y_OFFSET_MAX_LINE
         
-        # 3. 腰が極端に高すぎないかのチェック (山なり防止)
-        is_not_too_high = hip[1] > shoulder[1] - Y_OFFSET_MAX_LINE 
+        # 3. 腰が極端に高すぎないかのチェック (山なり防止) — 閾値を緩める
+        is_not_too_high = hip[1] > shoulder[1] - (Y_OFFSET_MAX_LINE * 2)
 
         is_good_form = is_straight and is_hip_level and is_not_too_high
         
@@ -171,7 +171,7 @@ while cap.isOpened():
                 last_good_form_time = current_time
 
             else:
-                # フォーム不良 or 足首が映ってない -> カウント一時停止
+                # フォーム不良 -> カウント一時停止（足首判定を廃止済み）
                 form_status = "Bad Form / Adjust View"
                 is_counting = False
                 last_good_form_time = None
