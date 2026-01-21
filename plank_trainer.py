@@ -104,15 +104,18 @@ def check_plank_form(landmarks):
     except Exception:
         return False, 0
 
-def check_visibility(landmarks, threshold=0.8):
+def check_visibility(landmarks, threshold=0.5, required_count=2):
     """
     上半身の主要ランドマーク（肩、肘、腰）の可視性をチェック
+    片側（左または右）で required_count 個以上のランドマークが検出できれば True を返します。
+    閾値を緩め、左右いずれかの片側が見えていればカウントを進められるようにします。
     """
-    # 右側でのチェック
-    is_right_visible = all(landmarks[lm.value].visibility > threshold for lm in [mp_pose.PoseLandmark.RIGHT_SHOULDER, mp_pose.PoseLandmark.RIGHT_ELBOW, mp_pose.PoseLandmark.RIGHT_HIP])
-    
-    # 左側でのチェック
-    is_left_visible = all(landmarks[lm.value].visibility > threshold for lm in [mp_pose.PoseLandmark.LEFT_SHOULDER, mp_pose.PoseLandmark.LEFT_ELBOW, mp_pose.PoseLandmark.LEFT_HIP])
+    # 各側で検出されているランドマーク数をカウント
+    right_count = sum(landmarks[lm.value].visibility > threshold for lm in [mp_pose.PoseLandmark.RIGHT_SHOULDER, mp_pose.PoseLandmark.RIGHT_ELBOW, mp_pose.PoseLandmark.RIGHT_HIP])
+    left_count = sum(landmarks[lm.value].visibility > threshold for lm in [mp_pose.PoseLandmark.LEFT_SHOULDER, mp_pose.PoseLandmark.LEFT_ELBOW, mp_pose.PoseLandmark.LEFT_HIP])
+
+    is_right_visible = right_count >= required_count
+    is_left_visible = left_count >= required_count
 
     return is_right_visible or is_left_visible
 
